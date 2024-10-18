@@ -42,6 +42,7 @@ type mutexLocker struct {
 func (l *mutexLocker) RLock()   { l.Mutex.Lock() }
 func (l *mutexLocker) RUnlock() { l.Mutex.Unlock() }
 
+// Concurrent safe.
 type Cache[K, V any] struct {
 	// immutable
 	zero            V
@@ -134,7 +135,7 @@ func (a *Cache[K, V]) Set(k K, v V) {
 	a.SetS(k, v, 1)
 }
 
-// v can implement Sizer. Replaces existing values, which are evicted.
+// Replaces existing values, which are evicted.
 // A min size of 1 will be used.
 func (a *Cache[K, V]) SetS(k K, v V, size uint32) {
 	// items.Add replaces, and we return if exists. That ensures only one
