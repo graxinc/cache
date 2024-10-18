@@ -37,4 +37,4 @@ For `Get` we skip the policy promotion on contention, however on `Set` the polic
   - Any minor optimizations within the ARC policy would reduce time and thus improve contention.
   - Ability to peek a slice of evictions in the policy could allow the cache to use a single lock for the eviction loop.
 - Tests and benchmarks are light in a few places.
-- counting.CountingNode.Handle() is a significant source of garbage.
+- counting.Node.Handle() is a significant source of garbage.

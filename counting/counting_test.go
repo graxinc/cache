@@ -7,11 +7,11 @@ import (
 	"github.com/graxinc/cache/counting"
 )
 
-func TestCountingNode_incRelease(t *testing.T) {
+func TestNode_incRelease(t *testing.T) {
 	t.Parallel()
 
 	v := &releaseVal{}
-	n := counting.NewCountingNode(v)
+	n := counting.NewNode(v)
 
 	do := func() {
 		var handles []counting.Handle[*releaseVal]
@@ -49,11 +49,11 @@ func TestCountingNode_incRelease(t *testing.T) {
 	}
 }
 
-func TestCountingNode_singleRelease(t *testing.T) {
+func TestNode_singleRelease(t *testing.T) {
 	t.Parallel()
 
 	v := &releaseVal{}
-	n := counting.NewCountingNode(v)
+	n := counting.NewNode(v)
 
 	var handles []counting.Handle[*releaseVal]
 	for range 5 {
@@ -88,14 +88,14 @@ func TestCountingNode_singleRelease(t *testing.T) {
 	}
 }
 
-func TestCountingCache_alreadyRelease(t *testing.T) {
+func TestCache_alreadyRelease(t *testing.T) {
 	t.Parallel()
 
 	keys := []int{1, 2, 3, 4}
 
 	// 1 for many evictions.
-	o := counting.CountingCacheOptions[int, *releaseVal]{Capacity: 1}
-	c := counting.NewCountingCache(o)
+	o := counting.CacheOptions[int, *releaseVal]{Capacity: 1}
+	c := counting.NewCache(o)
 
 	// Targeting the optimistic loop in Get, where a node has no handles plus is
 	// evicted by a Set while another goroutine Gets the same node.
@@ -137,11 +137,11 @@ func TestCountingCache_alreadyRelease(t *testing.T) {
 	}
 }
 
-func TestCountingCache_setExisting(t *testing.T) {
+func TestCache_setExisting(t *testing.T) {
 	t.Parallel()
 
-	o := counting.CountingCacheOptions[int, *releaseVal]{Capacity: 99}
-	c := counting.NewCountingCache(o)
+	o := counting.CacheOptions[int, *releaseVal]{Capacity: 99}
+	c := counting.NewCache(o)
 
 	v1 := &releaseVal{}
 	c.Set(1, v1).Release()
@@ -157,11 +157,11 @@ func TestCountingCache_setExisting(t *testing.T) {
 	}
 }
 
-func TestCountingCache_sizer(t *testing.T) {
+func TestCache_sizer(t *testing.T) {
 	t.Parallel()
 
-	o := counting.CountingCacheOptions[int, *releaseVal]{Capacity: 99}
-	c := counting.NewCountingCache(o)
+	o := counting.CacheOptions[int, *releaseVal]{Capacity: 99}
+	c := counting.NewCache(o)
 
 	c.SetS(1, &releaseVal{}, 2)
 	c.SetS(2, &releaseVal{}, 4)
