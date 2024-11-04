@@ -217,6 +217,17 @@ func (a *Cache[K, V]) Clear() {
 	a.policy.Clear()
 }
 
+func (a *Cache[K, V]) Capacity() int64 {
+	return a.cap.Load()
+}
+
+func (a *Cache[K, V]) SetCapacity(c int64) {
+	if c <= 0 {
+		c = 1
+	}
+	a.cap.Store(c)
+}
+
 // Noop if smaller. available (+/-) should not consider taken space in cache.
 // DEPRECATED. Please use SetAvailableCapacity.
 func (a *Cache[K, V]) SetLargerCapacity(available, max int64) {
@@ -243,22 +254,11 @@ func (a *Cache[K, V]) SetLargerCapacity(available, max int64) {
 	}
 }
 
-func (a *Cache[K, V]) SetCapacity(c int64) {
-	a.cap.Store(c)
-}
-
 // available (+/-) should not consider taken space in cache.
 func (a *Cache[K, V]) SetAvailableCapacity(available, max int64) {
 	new := a.size.Load() + available
-
-	if new > max {
-		new = max
-	}
-	if new <= 0 {
-		new = 1
-	}
-
-	a.cap.Store(new)
+	new = min(new, max)
+	a.SetCapacity(new)
 }
 
 func (a *Cache[K, V]) get(k K) (*CacheValue[V], bool) {

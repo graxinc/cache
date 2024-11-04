@@ -454,6 +454,22 @@ func TestCache_growPastCapacity(t *testing.T) {
 	})
 }
 
+func TestCache_SetCapacity_nonPositive(t *testing.T) {
+	t.Parallel()
+
+	a := cache.NewCache(cache.CacheOptions[string, struct{}]{Capacity: 2})
+
+	if a.Capacity() != 2 { // precondition
+		t.Fatal(a.Capacity())
+	}
+
+	a.SetCapacity(0)
+
+	if a.Capacity() != 1 {
+		t.Fatal(a.Capacity())
+	}
+}
+
 func TestCache_Expiration(t *testing.T) {
 	t.Parallel()
 
