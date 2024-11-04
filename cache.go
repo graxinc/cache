@@ -217,21 +217,31 @@ func (a *Cache[K, V]) Clear() {
 	a.policy.Clear()
 }
 
-// Noop if smaller. available should not consider taken space in cache.
+// Noop if smaller. available (+/-) should not consider taken space in cache.
 func (a *Cache[K, V]) SetLargerCapacity(available, max int64) {
+	a.setCapacity(available, max, true)
+}
+
+// available (+/-) should not consider taken space in cache.
+func (a *Cache[K, V]) SetCapacity(available, max int64) {
+	a.setCapacity(available, max, false)
+}
+
+func (a *Cache[K, V]) setCapacity(available, max int64, largerOnly bool) {
 	for {
 		cap := a.cap.Load()
-		size := a.size.Load()
 
-		// If size is over capacity, use capacity as base
-		// to prevent repeated increases even with zero delta.
-		base := min(size, cap)
+		base := cap
+		if largerOnly {
+			// NOTE: This is legacy, keeping for rollback if needed.
+			base = min(a.size.Load(), cap)
+		}
 
 		new := base + available
 
 		new = min(max, new)
 
-		if new <= cap {
+		if largerOnly && new <= cap {
 			return
 		}
 
