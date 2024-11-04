@@ -218,38 +218,22 @@ func (a *Cache[K, V]) Clear() {
 }
 
 // Noop if smaller. available (+/-) should not consider taken space in cache.
+// DEPRECATED. Please use SetAvailableCapacity.
 func (a *Cache[K, V]) SetLargerCapacity(available, max int64) {
-	// functionaly equivalent to what was before e4e057.
-	a.setCapacity(available, max, true)
-}
-
-// available (+/-) should not consider taken space in cache.
-func (a *Cache[K, V]) SetCapacity(available, max int64) {
-	a.setCapacity(available, max, false)
-}
-
-func (a *Cache[K, V]) setCapacity(available, max int64, largerOnly bool) {
+	// same as before commit e4e057.
 	for {
 		cap := a.cap.Load()
 		size := a.size.Load()
 
-		base := size
-		if largerOnly {
-			// If size is over capacity, use capacity as base
-			// to prevent repeated increases even with zero delta.
-			base = min(size, cap)
-		}
+		// If size is over capacity, use capacity as base
+		// to prevent repeated increases even with zero delta.
+		base := min(size, cap)
 
 		new := base + available
 
-		if new > max {
-			new = max
-		}
-		if new <= 0 {
-			new = 1
-		}
+		new = min(max, new)
 
-		if largerOnly && new <= cap {
+		if new <= cap {
 			return
 		}
 
@@ -257,6 +241,24 @@ func (a *Cache[K, V]) setCapacity(available, max int64, largerOnly bool) {
 			return
 		}
 	}
+}
+
+func (a *Cache[K, V]) SetCapacity(c int64) {
+	a.cap.Store(c)
+}
+
+// available (+/-) should not consider taken space in cache.
+func (a *Cache[K, V]) SetAvailableCapacity(available, max int64) {
+	new := a.size.Load() + available
+
+	if new > max {
+		new = max
+	}
+	if new <= 0 {
+		new = 1
+	}
+
+	a.cap.Store(new)
 }
 
 func (a *Cache[K, V]) get(k K) (*CacheValue[V], bool) {

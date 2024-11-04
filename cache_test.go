@@ -387,7 +387,7 @@ func TestCache_growPastCapacity(t *testing.T) {
 				if c.larger {
 					a.SetLargerCapacity(c.available, 50)
 				} else {
-					a.SetCapacity(c.available, 50)
+					a.SetAvailableCapacity(c.available, 50)
 				}
 				a.SetS(i, struct{}{}, r)
 			}
@@ -428,7 +428,7 @@ func TestCache_growPastCapacity(t *testing.T) {
 					if c.larger {
 						a.SetLargerCapacity(avail, 50)
 					} else {
-						a.SetCapacity(avail, 50)
+						a.SetAvailableCapacity(avail, 50)
 					}
 					a.SetS(i, struct{}{}, r)
 

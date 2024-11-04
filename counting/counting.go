@@ -214,7 +214,11 @@ func (a Cache[K, V]) SetLargerCapacity(available, max int64) {
 	a.cache.SetLargerCapacity(available, max)
 }
 
+func (a Cache[K, V]) SetCapacity(c int64) {
+	a.cache.SetCapacity(c)
+}
+
 // available (+/-) should not consider taken space in cache.
-func (a Cache[K, V]) SetCapacity(available, max int64) {
-	a.cache.SetCapacity(available, max)
+func (a Cache[K, V]) SetAvailableCapacity(available, max int64) {
+	a.cache.SetAvailableCapacity(available, max)
 }
