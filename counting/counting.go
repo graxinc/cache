@@ -209,7 +209,12 @@ func (a Cache[K, V]) Handles() int {
 	return c
 }
 
-// Noop if smaller. available should not consider taken space in cache.
+// Noop if smaller. available (+/-) should not consider taken space in cache.
 func (a Cache[K, V]) SetLargerCapacity(available, max int64) {
 	a.cache.SetLargerCapacity(available, max)
+}
+
+// available (+/-) should not consider taken space in cache.
+func (a Cache[K, V]) SetCapacity(available, max int64) {
+	a.cache.SetCapacity(available, max)
 }
