@@ -356,23 +356,89 @@ func TestCache_SetLargerCapacity_sizeGreaterCap(t *testing.T) {
 	checkSize(t, a, 1, 1)
 }
 
-func TestCache_SetLargerCapacity_growPastCapacity(t *testing.T) {
+func TestCache_growPastCapacity(t *testing.T) {
 	t.Parallel()
 
-	// ensure we don't grow past capacity in the case where an item
-	// is evicted, and a subsequent grow attempted.
+	cases := []struct {
+		available  int64
+		larger     bool
+		wantLength int
+		wantSize   int
+	}{
+		{0, false, 4, 4},
+		{1, false, 39, 50},
+		{3, false, 39, 50},
+		{-1, false, 1, 1},
+		{-3, false, 1, 1},
+		{1, true, 39, 50},
+		{3, true, 39, 50},
+		{-1, true, 4, 4},
+		{-3, true, 4, 4},
+	}
+	for _, c := range cases {
+		t.Run("staticAvail", func(t *testing.T) {
+			// ensure we don't grow past capacity in an iterative way.
 
-	a := cache.NewCache(cache.CacheOptions[int, struct{}]{Capacity: 4})
+			rando := rand.New(rand.NewSource(5)) //nolint:gosec
+			a := cache.NewCache(cache.CacheOptions[int, struct{}]{Capacity: 4})
 
-	rando := rand.New(rand.NewSource(5)) //nolint:gosec
+			for i := range 2000 {
+				r := uint32(rando.Intn(3))
+				if c.larger {
+					a.SetLargerCapacity(c.available, 50)
+				} else {
+					a.SetCapacity(c.available, 50)
+				}
+				a.SetS(i, struct{}{}, r)
+			}
 
-	for i := range 200 {
-		r := uint32(rando.Intn(3))
-		a.SetLargerCapacity(0, 200)
-		a.SetS(i, struct{}{}, r)
+			checkSize(t, a, c.wantLength, int64(c.wantSize))
+		})
 	}
 
-	checkSize(t, a, 3, 4)
+	t.Run("randomizedAvail", func(t *testing.T) {
+		run := func(t *testing.T, larger bool, wantMin, wantMed int64) {
+			rando := rand.New(rand.NewSource(5)) //nolint:gosec
+			a := cache.NewCache(cache.CacheOptions[int, struct{}]{Capacity: 4})
+			// fill first
+			for i := range 5 {
+				a.SetS(-i, struct{}{}, 1)
+			}
+			if a.Size() != 4 { // precondition
+				t.Fatal(a.Size())
+			}
+
+			var sizes []int64
+			for i := range 2000 {
+				r := uint32(rando.Intn(3))
+				avail := rando.Int63n(11) - 5 // [-5,5]
+				if larger {
+					a.SetLargerCapacity(avail, 50)
+				} else {
+					a.SetCapacity(avail, 50)
+				}
+				a.SetS(i, struct{}{}, r)
+
+				sizes = append(sizes, a.Size())
+			}
+
+			med := sizes[len(sizes)/2]
+			max := slices.Max(sizes)
+			min := slices.Min(sizes)
+
+			if med != wantMed {
+				t.Fatal(med)
+			}
+			if max != 51 {
+				t.Fatal(max)
+			}
+			if min != wantMin {
+				t.Fatal(min)
+			}
+		}
+		t.Run("larger", func(t *testing.T) { run(t, true, 5, 50) })
+		t.Run("notLarger", func(t *testing.T) { run(t, false, 1, 38) })
+	})
 }
 
 func TestCache_Expiration(t *testing.T) {
