@@ -213,8 +213,12 @@ func (a Cache[K, V]) Capacity() int64 {
 	return a.cache.Capacity()
 }
 
-func (a Cache[K, V]) SetCapacity(c int64) {
-	a.cache.SetCapacity(c)
+func (a Cache[K, V]) SetCapacity(new int64) (old int64) {
+	return a.cache.SetCapacity(new)
+}
+
+func (a Cache[K, V]) SwapCapacity(old, new int64) (swapped bool) {
+	return a.cache.SwapCapacity(old, new)
 }
 
 // Noop if smaller. available (+/-) should not consider taken space in cache.

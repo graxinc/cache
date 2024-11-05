@@ -470,6 +470,30 @@ func TestCache_SetCapacity_nonPositive(t *testing.T) {
 	}
 }
 
+func TestCache_SwapCapacity(t *testing.T) {
+	t.Parallel()
+
+	a := cache.NewCache(cache.CacheOptions[string, struct{}]{Capacity: 2})
+
+	if a.Capacity() != 2 { // precondition
+		t.Fatal(a.Capacity())
+	}
+
+	if a.SwapCapacity(1, 3) {
+		t.Fatal("expected false")
+	}
+	if a.Capacity() != 2 {
+		t.Fatal(a.Capacity())
+	}
+
+	if !a.SwapCapacity(2, 3) {
+		t.Fatal("expected true")
+	}
+	if a.Capacity() != 3 {
+		t.Fatal(a.Capacity())
+	}
+}
+
 func TestCache_Expiration(t *testing.T) {
 	t.Parallel()
 
