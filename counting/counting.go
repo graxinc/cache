@@ -109,11 +109,17 @@ type CacheOptions[K any, V Releaser] struct {
 	Capacity      int64                                           // Defaults to 100.
 	MapCreator    func() maps.Map[K, *cache.CacheValue[*Node[V]]] // defaults to maps.Sync
 	PolicyCreator func() policy.Policy[K]                         // defaults to policy.NewARC
+	Evict         func(_ K, _ V, Release func())                  // Caller must Release, not V.Release.
 }
 
 func NewCache[K comparable, V Releaser](o CacheOptions[K, V]) Cache[K, V] {
 	evict := func(k K, v *Node[V]) {
 		v.Release()
+	}
+	if o.Evict != nil {
+		evict = func(k K, v *Node[V]) {
+			o.Evict(k, v.Value(), v.Release)
+		}
 	}
 
 	c := cache.NewCache(cache.CacheOptions[K, *Node[V]]{

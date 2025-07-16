@@ -1,6 +1,7 @@
 package counting_test
 
 import (
+	"slices"
 	"sync"
 	"testing"
 
@@ -168,6 +169,52 @@ func TestCache_sizer(t *testing.T) {
 
 	if v := c.Size(); v != 6 {
 		t.Fatal(v)
+	}
+}
+
+func TestCache_evict(t *testing.T) {
+	t.Parallel()
+
+	var evicts []int
+	var evictReleases []func()
+	evict := func(k int, v *releaseVal, release func()) {
+		evicts = append(evicts, k)
+		evictReleases = append(evictReleases, release)
+	}
+	o := counting.CacheOptions[int, *releaseVal]{Capacity: 2, Evict: evict}
+	c := counting.NewCache(o)
+
+	v1 := &releaseVal{}
+	c.Set(1, v1).Release()
+
+	v2 := &releaseVal{}
+	c.Set(2, v2).Release()
+
+	v3 := &releaseVal{}
+	c.Set(3, v3).Release()
+
+	v4 := &releaseVal{}
+	c.Set(4, v4).Release()
+
+	if !slices.Equal(evicts, []int{1, 2}) {
+		t.Fatal("bad evicts", evicts)
+	}
+
+	for _, v := range []*releaseVal{v1, v2, v3, v4} {
+		if got := v.releases(); got != 0 {
+			t.Fatal("should not release yet", got)
+		}
+	}
+
+	for _, r := range evictReleases {
+		r()
+	}
+
+	if got := v1.releases(); got != 1 {
+		t.Fatal("bad release", got)
+	}
+	if got := v2.releases(); got != 1 {
+		t.Fatal("bad release", got)
 	}
 }
 
