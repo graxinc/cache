@@ -165,7 +165,47 @@ func TestARC_evict(t *testing.T) {
 	checkEvict(2)
 	p.Add(1)
 
-	want := []int{1, 3}
+	want := []int{3, 1}
+	got := slices.Collect(p.Values())
+	diffFatal(t, want, got)
+}
+
+func TestARC_evictSkip(t *testing.T) {
+	t.Parallel()
+
+	p := policy.NewARC[int]()
+
+	skip := func(k int) bool {
+		return k == 2
+	}
+
+	checkEvict := func(k int) {
+		t.Helper()
+		e, ok := p.EvictSkip(skip)
+		if !ok || e != k {
+			t.Fatal(ok, e)
+		}
+	}
+	checkNoEvict := func() {
+		t.Helper()
+		e, ok := p.EvictSkip(skip)
+		if ok {
+			t.Fatal(e)
+		}
+	}
+
+	p.Add(1)
+	p.Add(2)
+	checkEvict(1)
+	p.Add(3)
+	checkEvict(3)
+	p.Add(1)
+	checkEvict(1)
+	p.Add(2)
+	checkNoEvict()
+	p.Add(1)
+
+	want := []int{2, 1}
 	got := slices.Collect(p.Values())
 	diffFatal(t, want, got)
 }
@@ -186,7 +226,7 @@ func TestARC_values_order(t *testing.T) {
 	p.Evict()
 	p.Evict()
 
-	want := []int{7, 6, 3, 9, 8, 5, 4, 2}
+	want := []int{9, 7, 8, 6, 5, 3, 4, 2}
 	got := slices.Collect(p.Values())
 	diffFatal(t, want, got)
 }
