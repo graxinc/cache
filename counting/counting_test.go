@@ -218,6 +218,92 @@ func TestCache_evict(t *testing.T) {
 	}
 }
 
+func TestCache_evictSkip(t *testing.T) {
+	t.Parallel()
+
+	var evicts []int
+	evict := func(k int, v *releaseVal, release func()) {
+		evicts = append(evicts, k)
+		release()
+	}
+	o := counting.CacheOptions[int, *releaseVal]{Capacity: 5, Evict: evict, EvictSkip: true}
+	c := counting.NewCache(o)
+
+	vals := make(map[int]*releaseVal)
+	checkRel := func(i int, want int) {
+		t.Helper()
+		r := vals[i].releases()
+		if r != want {
+			t.Fatal("bad releases", i, r)
+		}
+	}
+	addVal := func(i int) {
+		v := &releaseVal{}
+		c.Set(i, v).Release()
+		vals[i] = v
+	}
+	addVal(1)
+	addVal(2)
+	addVal(3)
+	addVal(4)
+	addVal(5)
+
+	get := func(k int) {
+		h, ok := c.Get(k)
+		if !ok {
+			t.Fatal("missing", k)
+		}
+		h.Release()
+	}
+	getHold := func(k int) counting.Releaser {
+		h, ok := c.Get(k)
+		if !ok {
+			t.Fatal("missing", k)
+		}
+		return h
+	}
+
+	get(3)
+	get(4)
+	h := getHold(1)
+	get(3)
+	get(3)
+
+	if len(evicts) > 0 {
+		t.Fatal(evicts)
+	}
+
+	addVal(6)
+	get(6)
+	addVal(7)
+	get(7)
+
+	if !slices.Equal(evicts, []int{2, 5}) {
+		t.Fatal("bad evicts", evicts)
+	}
+
+	checkRel(1, 0)
+
+	h.Release()
+
+	addVal(8)
+	get(8)
+	addVal(9)
+	get(9)
+
+	if !slices.Equal(evicts, []int{2, 5, 4, 1}) {
+		t.Fatal("bad evicts", evicts)
+	}
+
+	for _, i := range evicts {
+		checkRel(i, 1)
+		delete(vals, i)
+	}
+	for i := range vals {
+		checkRel(i, 0)
+	}
+}
+
 type releaseVal struct {
 	mu  sync.Mutex
 	rel int

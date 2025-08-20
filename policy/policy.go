@@ -16,6 +16,7 @@ type Policy[T any] interface {
 	Clear()
 	Promote(T) (exists bool)
 	Evict() (_ T, ok bool)
+	EvictSkip(skip func(T) bool) (_ T, ok bool)
 
 	// !ok if already exists.
 	Add(T) (ok bool)
@@ -76,7 +77,17 @@ func (c *clist[T]) Clear() {
 	clear(c.keys)
 }
 
-func (c *clist[T]) All() iter.Seq[T] {
+func (c *clist[T]) AllReverse() iter.Seq[*list.Element[T]] {
+	return func(yield func(*list.Element[T]) bool) {
+		for e := c.l.Back(); e != nil; e = e.Prev() {
+			if !yield(e) {
+				return
+			}
+		}
+	}
+}
+
+func (c *clist[T]) AllForward() iter.Seq[T] {
 	return func(yield func(T) bool) {
 		for e := c.l.Front(); e != nil; e = e.Next() {
 			if !yield(e.Value) {
@@ -114,14 +125,24 @@ func (c *ARC[T]) Clear() {
 }
 
 func (c *ARC[T]) Values() iter.Seq[T] {
+	// ping pong between recent/frequent.
+
 	return func(yield func(T) bool) {
-		for v := range c.t2.All() {
-			if !yield(v) {
+		t1Next, stop := iter.Pull(c.t1.AllForward())
+		defer stop()
+		t2Next, stop := iter.Pull(c.t2.AllForward())
+		defer stop()
+
+		for {
+			t1, ok1 := t1Next()
+			if ok1 && !yield(t1) {
 				return
 			}
-		}
-		for v := range c.t1.All() {
-			if !yield(v) {
+			t2, ok2 := t2Next()
+			if ok2 && !yield(t2) {
+				return
+			}
+			if !ok1 && !ok2 {
 				return
 			}
 		}
@@ -143,19 +164,31 @@ func (c *ARC[T]) Promote(key T) bool {
 	return false
 }
 
-func (c *ARC[T]) Evict() (evicted T, ok bool) {
+func (c *ARC[T]) EvictSkip(skip func(T) bool) (evicted T, ok bool) {
+	tRemove := func(tList, bList clist[T]) (T, bool) {
+		for elm := range tList.AllReverse() {
+			if skip(elm.Value) {
+				continue
+			}
+			tList.Remove(elm)
+			bList.PushFront(elm.Value)
+			return elm.Value, true
+		}
+		var zero T
+		return zero, false
+	}
 	if c.t1.Len() > 0 && (c.t1.Len() > c.t1TargetLen() || c.t2.Len() == 0) {
-		e := c.t1.RemoveTail()
-		c.b1.PushFront(e)
-		return e, true
+		e, ok := tRemove(c.t1, c.b1)
+		if ok {
+			return e, true
+		}
 	}
-	if c.t2.Len() > 0 {
-		e := c.t2.RemoveTail()
-		c.b2.PushFront(e)
-		return e, true
-	}
-	var zero T
-	return zero, false
+	return tRemove(c.t2, c.b2)
+}
+
+func (c *ARC[T]) Evict() (evicted T, ok bool) {
+	skip := func(T) bool { return false }
+	return c.EvictSkip(skip)
 }
 
 func (c *ARC[T]) Add(key T) (ok bool) {

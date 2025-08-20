@@ -110,6 +110,7 @@ type CacheOptions[K any, V Releaser] struct {
 	MapCreator    func() maps.Map[K, *cache.CacheValue[*Node[V]]] // defaults to maps.Sync
 	PolicyCreator func() policy.Policy[K]                         // defaults to policy.NewARC
 	Evict         func(_ K, _ V, Release func())                  // Caller must Release, not V.Release.
+	EvictSkip     bool
 }
 
 func NewCache[K comparable, V Releaser](o CacheOptions[K, V]) Cache[K, V] {
@@ -122,12 +123,20 @@ func NewCache[K comparable, V Releaser](o CacheOptions[K, V]) Cache[K, V] {
 		}
 	}
 
+	var evictSkip func(K, *Node[V]) bool
+	if o.EvictSkip {
+		evictSkip = func(k K, n *Node[V]) bool {
+			return n.Handles() > 0
+		}
+	}
+
 	c := cache.NewCache(cache.CacheOptions[K, *Node[V]]{
 		Expiration:    o.Expiration,
 		Evict:         evict,
 		Capacity:      o.Capacity,
 		MapCreator:    o.MapCreator,
 		PolicyCreator: o.PolicyCreator,
+		EvictSkip:     evictSkip,
 	})
 	return Cache[K, V]{c}
 }
@@ -225,11 +234,6 @@ func (a Cache[K, V]) SetCapacity(new int64) (old int64) {
 
 func (a Cache[K, V]) SwapCapacity(old, new int64) (swapped bool) {
 	return a.cache.SwapCapacity(old, new)
-}
-
-// Noop if smaller. available (+/-) should not consider taken space in cache.
-func (a Cache[K, V]) SetLargerCapacity(available, max int64) {
-	a.cache.SetLargerCapacity(available, max)
 }
 
 // available (+/-) should not consider taken space in cache.
