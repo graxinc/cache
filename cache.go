@@ -245,32 +245,6 @@ func (a *Cache[K, V]) SwapCapacity(old, new int64) (swapped bool) {
 	return a.cap.CompareAndSwap(old, new)
 }
 
-// Noop if smaller. available (+/-) should not consider taken space in cache.
-// DEPRECATED. Please use SetAvailableCapacity.
-func (a *Cache[K, V]) SetLargerCapacity(available, max int64) {
-	// same as before commit e4e057.
-	for {
-		cap := a.cap.Load()
-		size := a.size.Load()
-
-		// If size is over capacity, use capacity as base
-		// to prevent repeated increases even with zero delta.
-		base := min(size, cap)
-
-		new := base + available
-
-		new = min(max, new)
-
-		if new <= cap {
-			return
-		}
-
-		if a.cap.CompareAndSwap(cap, new) {
-			return
-		}
-	}
-}
-
 // available (+/-) should not consider taken space in cache.
 func (a *Cache[K, V]) SetAvailableCapacity(available, max int64) {
 	new := a.size.Load() + available

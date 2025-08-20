@@ -308,75 +308,22 @@ func TestCache_Clear_random(t *testing.T) {
 	checkAll(t, a, nil)
 }
 
-func TestCache_SetLargerCapacity(t *testing.T) {
-	t.Parallel()
-
-	a := cache.NewCache(cache.CacheOptions[string, struct{}]{Capacity: 10})
-
-	a.SetS("a", struct{}{}, 10)
-	a.SetS("b", struct{}{}, 5)
-	a.SetS("c", struct{}{}, 4)
-
-	checkKeys(t, a, "b", "c")
-	checkSize(t, a, 2, 9)
-
-	a.SetLargerCapacity(11, 20)
-
-	a.SetS("d", struct{}{}, 17)
-
-	checkKeys(t, a, "b", "c", "d")
-	checkSize(t, a, 3, 26)
-
-	a.SetS("e", struct{}{}, 1)
-
-	checkKeys(t, a, "d", "e")
-	checkSize(t, a, 2, 18)
-
-	a.SetLargerCapacity(0, 20)
-
-	checkSize(t, a, 2, 18)
-}
-
-func TestCache_SetLargerCapacity_sizeGreaterCap(t *testing.T) {
-	t.Parallel()
-
-	a := cache.NewCache(cache.CacheOptions[string, struct{}]{Capacity: 10})
-
-	a.SetS("a", struct{}{}, 12)
-
-	checkKeys(t, a, "a")
-	checkSize(t, a, 1, 12)
-
-	a.SetLargerCapacity(2, 20)
-
-	a.SetS("b", struct{}{}, 1)
-
-	// evicts "a" since avail 2 was added to cap of 10 instead of size of 12.
-	checkKeys(t, a, "b")
-	checkSize(t, a, 1, 1)
-}
-
 func TestCache_growPastCapacity(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
 		available  int64
-		larger     bool
 		wantLength int
 		wantSize   int
 	}{
-		{0, false, 1, 1},
-		{1, false, 39, 50},
-		{3, false, 39, 50},
-		{-1, false, 1, 1},
-		{-3, false, 1, 1},
-		{1, true, 39, 50},
-		{3, true, 39, 50},
-		{-1, true, 4, 4},
-		{-3, true, 4, 4},
+		{0, 1, 1},
+		{1, 39, 50},
+		{3, 39, 50},
+		{-1, 1, 1},
+		{-3, 1, 1},
 	}
 	for _, c := range cases {
-		t.Run(fmt.Sprintf("larger=%v,avail=%v", c.larger, c.available), func(t *testing.T) {
+		t.Run(fmt.Sprintf("avail=%v", c.available), func(t *testing.T) {
 			// ensure we don't grow past capacity in an iterative way.
 
 			rando := rand.New(rand.NewSource(5)) //nolint:gosec
@@ -384,11 +331,7 @@ func TestCache_growPastCapacity(t *testing.T) {
 
 			for i := range 2000 {
 				r := uint32(rando.Intn(3))
-				if c.larger {
-					a.SetLargerCapacity(c.available, 50)
-				} else {
-					a.SetAvailableCapacity(c.available, 50)
-				}
+				a.SetAvailableCapacity(c.available, 50)
 				a.SetS(i, struct{}{}, r)
 			}
 
@@ -398,19 +341,15 @@ func TestCache_growPastCapacity(t *testing.T) {
 
 	t.Run("randomizedAvail", func(t *testing.T) {
 		cases := []struct {
-			larger                    bool
 			iterations                int
 			wantMin, wantMed, wantMax int64
 		}{
-			{false, 10, 1, 5, 10},
-			{false, 100, 1, 3, 10},
-			{false, 2000, 1, 3, 23},
-			{true, 10, 5, 11, 17},
-			{true, 100, 5, 49, 51},
-			{true, 2000, 5, 50, 51},
+			{10, 1, 5, 10},
+			{100, 1, 3, 10},
+			{2000, 1, 3, 23},
 		}
 		for _, c := range cases {
-			t.Run(fmt.Sprintf("larger=%v,iterations=%v", c.larger, c.iterations), func(t *testing.T) {
+			t.Run(fmt.Sprintf("iterations=%v", c.iterations), func(t *testing.T) {
 				rando := rand.New(rand.NewSource(5)) //nolint:gosec
 				a := cache.NewCache(cache.CacheOptions[int, struct{}]{Capacity: 4})
 				// fill first
@@ -425,11 +364,7 @@ func TestCache_growPastCapacity(t *testing.T) {
 				for i := range c.iterations {
 					r := uint32(rando.Intn(3))
 					avail := rando.Int63n(11) - 5 // [-5,5]
-					if c.larger {
-						a.SetLargerCapacity(avail, 50)
-					} else {
-						a.SetAvailableCapacity(avail, 50)
-					}
+					a.SetAvailableCapacity(avail, 50)
 					a.SetS(i, struct{}{}, r)
 
 					sizes = append(sizes, a.Size())
