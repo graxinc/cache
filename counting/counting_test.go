@@ -304,6 +304,29 @@ func TestCache_evictSkip(t *testing.T) {
 	}
 }
 
+func TestCache_evictSkip_noSpace(t *testing.T) {
+	t.Parallel()
+
+	o := counting.CacheOptions[int, *releaseVal]{Capacity: 1, EvictSkip: true}
+	c := counting.NewCache(o)
+
+	v1 := &releaseVal{}
+	c.Set(1, v1).Release()
+
+	h1, ok := c.Get(1)
+	if !ok {
+		t.Fatal("missing 1")
+	}
+	defer h1.Release()
+
+	v2 := &releaseVal{}
+	c.Set(2, v2).Release()
+
+	if r := v2.releases(); r != 1 {
+		t.Fatal(r)
+	}
+}
+
 type releaseVal struct {
 	mu  sync.Mutex
 	rel int
