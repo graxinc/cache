@@ -19,8 +19,9 @@ type CacheValue[V any] struct {
 }
 
 type CacheOptions[K, V any] struct {
-	Expiration    time.Duration                      // Defaults to forever.
-	Evict         func(K, V)                         // Might be called concurrently.
+	Expiration    time.Duration // Defaults to forever.
+	Evict         func(K, V)    // Might be called concurrently.
+	EvictSkip     func(K, V) bool
 	Capacity      int64                              // Defaults to 100.
 	RLock         bool                               // Whether to use an RLock when possible. Defaults to false.
 	MapCreator    func() maps.Map[K, *CacheValue[V]] // defaults to maps.Sync.
@@ -51,6 +52,7 @@ type Cache[K, V any] struct {
 	expirationEpoch time.Time
 	evictBool       atomic.Bool
 	evict           func(K, V)
+	evictSkip       func(K) bool
 	items           maps.Map[K, *CacheValue[V]]
 	policy          policy.Policy[K]
 
@@ -99,6 +101,14 @@ func NewCache[K comparable, V any](o CacheOptions[K, V]) *Cache[K, V] {
 		policyMu:        policyMu,
 	}
 	c.cap.Store(o.Capacity)
+
+	c.evictSkip = func(K) bool { return false }
+	if o.EvictSkip != nil {
+		c.evictSkip = func(k K) bool {
+			v := c.panicGet(k)
+			return o.EvictSkip(k, v.v)
+		}
+	}
 	return c
 }
 
@@ -160,7 +170,7 @@ func (a *Cache[K, V]) SetS(k K, v V, size uint32) {
 }
 
 func (a *Cache[K, V]) evicts() {
-	if !a.evictBool.CompareAndSwap(false, true) {
+	if a.evictBool.Swap(true) { // old was true, other already doing
 		return
 	}
 	defer a.evictBool.Store(false)
@@ -296,7 +306,7 @@ func (a *Cache[K, V]) policyEvict() (_ K, ok bool) {
 	a.policyMu.Lock()
 	defer a.policyMu.Unlock()
 
-	return a.policy.Evict()
+	return a.policy.EvictSkip(a.evictSkip)
 }
 
 func (a *Cache[K, V]) panicPolicyAdd(k K) {
