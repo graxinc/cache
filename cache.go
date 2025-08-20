@@ -52,7 +52,7 @@ type Cache[K, V any] struct {
 	expirationEpoch time.Time
 	evictBool       atomic.Bool
 	evict           func(K, V)
-	evictSkip       func(K) bool
+	evictSkip       func(K, V) bool // might be nil
 	items           maps.Map[K, *CacheValue[V]]
 	policy          policy.Policy[K]
 
@@ -96,19 +96,12 @@ func NewCache[K comparable, V any](o CacheOptions[K, V]) *Cache[K, V] {
 		expiration:      expiration,
 		expirationEpoch: time.Now(),
 		evict:           o.Evict,
+		evictSkip:       o.EvictSkip,
 		items:           o.MapCreator(),
 		policy:          o.PolicyCreator(),
 		policyMu:        policyMu,
 	}
 	c.cap.Store(o.Capacity)
-
-	c.evictSkip = func(K) bool { return false }
-	if o.EvictSkip != nil {
-		c.evictSkip = func(k K) bool {
-			v := c.panicGet(k)
-			return o.EvictSkip(k, v.v)
-		}
-	}
 	return c
 }
 
@@ -146,11 +139,16 @@ func (a *Cache[K, V]) Set(k K, v V) {
 }
 
 // Replaces existing values, which are evicted.
-// A min size of 1 will be used.
+// A min size of 1 will be used. Set item always comes out of evict.
 func (a *Cache[K, V]) SetS(k K, v V, size uint32) {
 	// items.Add replaces, and we return if exists. That ensures only one
 	// caller will get past items.Add until items.Delete (after eviction),
 	// keeping the set of keys between policy and items consistent.
+
+	if a.evictSkip != nil && a.evicts() {
+		a.evict(k, v)
+		return
+	}
 
 	size = max(1, size)
 
@@ -162,23 +160,25 @@ func (a *Cache[K, V]) SetS(k K, v V, size uint32) {
 		return
 	}
 
-	a.evicts()
+	if a.evictSkip == nil {
+		a.evicts()
+	}
 
 	a.length.Add(1)
 	a.size.Add(int64(size))
 	a.panicPolicyAdd(k)
 }
 
-func (a *Cache[K, V]) evicts() {
+func (a *Cache[K, V]) evicts() (noSpace bool) {
 	if a.evictBool.Swap(true) { // old was true, other already doing
-		return
+		return a.size.Load() >= a.cap.Load()
 	}
 	defer a.evictBool.Store(false)
 
 	for s := a.size.Load(); s >= a.cap.Load(); s = a.size.Load() {
 		k, ok := a.policyEvict()
 		if !ok {
-			break
+			return true
 		}
 		v := a.panicDelete(k)
 
@@ -186,6 +186,7 @@ func (a *Cache[K, V]) evicts() {
 		a.size.Add(-int64(v.size))
 		a.evict(k, v.v)
 	}
+	return false
 }
 
 // Results ordered by hot->cold. Will block.
@@ -280,7 +281,15 @@ func (a *Cache[K, V]) policyEvict() (_ K, ok bool) {
 	a.policyMu.Lock()
 	defer a.policyMu.Unlock()
 
-	return a.policy.EvictSkip(a.evictSkip)
+	if a.evictSkip == nil {
+		return a.policy.Evict()
+	}
+
+	evictSkip := func(k K) bool {
+		v := a.panicGet(k)
+		return a.evictSkip(k, v.v)
+	}
+	return a.policy.EvictSkip(evictSkip)
 }
 
 func (a *Cache[K, V]) panicPolicyAdd(k K) {
