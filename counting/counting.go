@@ -100,6 +100,7 @@ func (h *Handle[T]) Release() {
 	if !h.released.Swap(true) {
 		h.n.dec()
 		if h.handlePool != nil {
+			h.n = nil
 			h.handlePool.Put(h)
 		}
 	}
