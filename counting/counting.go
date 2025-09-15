@@ -15,11 +15,6 @@ type Releaser interface {
 	Release()
 }
 
-type Handle[T any] interface {
-	Releaser
-	Value() T
-}
-
 // A node that tracks Releases from its Handles and only releases the underlying
 // value once all Handles and the node itself have been released.
 // Concurrent safe.
@@ -45,11 +40,11 @@ func (n *Node[T]) Release() {
 
 // Node already released when !ok.
 // Caller must release Handle.
-func (n *Node[T]) Handle() (_ Handle[T], ok bool) {
+func (n *Node[T]) Handle() (_ *Handle[T], ok bool) {
 	if !n.inc() {
-		return nil, false
+		return &Handle[T]{}, false
 	}
-	return &handle[T]{n: n}, true
+	return &Handle[T]{n: n}, true
 }
 
 // Intended for metrics.
@@ -81,16 +76,16 @@ func (n *Node[T]) dec() {
 	}
 }
 
-type handle[T Releaser] struct {
+type Handle[T Releaser] struct {
 	n        *Node[T]
 	released atomic.Bool
 }
 
-func (h *handle[T]) Value() T {
+func (h *Handle[T]) Value() T {
 	return h.n.Value()
 }
 
-func (h *handle[T]) Release() {
+func (h *Handle[T]) Release() {
 	if !h.released.Swap(true) {
 		h.n.dec()
 	}
@@ -143,8 +138,8 @@ func NewCache[K comparable, V Releaser](o CacheOptions[K, V]) Cache[K, V] {
 
 // Results ordered by most->least. Will block.
 // Caller must release each Handle.
-func (a Cache[K, V]) All() iter.Seq2[K, Handle[V]] {
-	return func(yield func(K, Handle[V]) bool) {
+func (a Cache[K, V]) All() iter.Seq2[K, *Handle[V]] {
+	return func(yield func(K, *Handle[V]) bool) {
 		for k, v := range a.cache.All() {
 			h, ok := v.Handle()
 			if !ok { // already released, skip
@@ -158,11 +153,11 @@ func (a Cache[K, V]) All() iter.Seq2[K, Handle[V]] {
 }
 
 // Caller must release Handle. Does not Promote.
-func (a Cache[K, V]) Peek(k K) (Handle[V], bool) {
+func (a Cache[K, V]) Peek(k K) (*Handle[V], bool) {
 	for {
 		v, ok := a.cache.Get(k)
 		if !ok {
-			return nil, false
+			return &Handle[V]{}, false
 		}
 		if h, ok := v.Handle(); ok {
 			return h, true
@@ -175,24 +170,24 @@ func (a Cache[K, V]) Promote(k K) {
 }
 
 // Caller must release Handle. Promotes.
-func (a Cache[K, V]) Get(k K) (Handle[V], bool) {
+func (a Cache[K, V]) Get(k K) (*Handle[V], bool) {
 	h, ok := a.Peek(k)
 	if !ok {
-		return nil, false
+		return &Handle[V]{}, false
 	}
 	a.cache.Promote(k)
 	return h, true
 }
 
 // Alias for SetS(k,v,1).
-func (a Cache[K, V]) Set(k K, v V) Handle[V] {
+func (a Cache[K, V]) Set(k K, v V) *Handle[V] {
 	return a.SetS(k, v, 1)
 }
 
 // Replaces existing values, which are evicted.
 // A min size of 1 will be used.
 // Caller must release Handle.
-func (a Cache[K, V]) SetS(k K, v V, size uint32) Handle[V] {
+func (a Cache[K, V]) SetS(k K, v V, size uint32) *Handle[V] {
 	n := NewNode(v)
 	h, _ := n.Handle()
 	a.cache.SetS(k, n, size)

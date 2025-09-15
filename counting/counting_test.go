@@ -15,7 +15,7 @@ func TestNode_incRelease(t *testing.T) {
 	n := counting.NewNode(v)
 
 	do := func() {
-		var handles []counting.Handle[*releaseVal]
+		var handles []*counting.Handle[*releaseVal]
 		for range 1000 {
 			h, ok := n.Handle()
 			if !ok {
@@ -56,7 +56,7 @@ func TestNode_singleRelease(t *testing.T) {
 	v := &releaseVal{}
 	n := counting.NewNode(v)
 
-	var handles []counting.Handle[*releaseVal]
+	var handles []*counting.Handle[*releaseVal]
 	for range 5 {
 		h, _ := n.Handle()
 		handles = append(handles, h)
