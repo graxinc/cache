@@ -4,7 +4,7 @@ import (
 	"iter"
 	"math"
 
-	"github.com/szyhf/go-container/list"
+	"github.com/graxinc/cache/policy/internal"
 )
 
 // Based on https://github.com/dgryski/go-arc / https://github.com/hashicorp/golang-lru.
@@ -27,14 +27,14 @@ type Policy[T any] interface {
 }
 
 type clist[T comparable] struct {
-	l    *list.List[T]
-	keys map[T]*list.Element[T]
+	l    *internal.List[T]
+	keys map[T]*internal.Element[T]
 }
 
 func makeClist[T comparable]() clist[T] {
 	return clist[T]{
-		l:    list.New[T](),
-		keys: make(map[T]*list.Element[T]),
+		l:    internal.New[T](),
+		keys: make(map[T]*internal.Element[T]),
 	}
 }
 
@@ -44,28 +44,28 @@ func (c *clist[T]) Has(key T) bool {
 }
 
 // do not mod result. might return nil.
-func (c *clist[T]) Lookup(key T) *list.Element[T] {
+func (c *clist[T]) Lookup(key T) *internal.Element[T] {
 	return c.keys[key]
 }
 
-func (c *clist[T]) MoveToFront(elt *list.Element[T]) {
+func (c *clist[T]) MoveToFront(elt *internal.Element[T]) {
 	c.l.MoveToFront(elt)
 }
 
-func (c *clist[T]) PushFront(key T) {
-	c.keys[key] = c.l.PushFront(key)
+func (c *clist[T]) PushFront(buf *internal.Element[T], key T) {
+	c.keys[key] = c.l.PushFront(buf, key)
 }
 
-func (c *clist[T]) Remove(elt *list.Element[T]) {
+func (c *clist[T]) Remove(elt *internal.Element[T]) {
 	delete(c.keys, elt.Value)
 	c.l.Remove(elt)
 }
 
 // list must not be empty.
-func (c *clist[T]) RemoveTail() T {
+func (c *clist[T]) RemoveTail() *internal.Element[T] {
 	elt := c.l.Back()
 	c.Remove(elt)
-	return elt.Value
+	return elt
 }
 
 func (c *clist[T]) Len() int {
@@ -77,9 +77,9 @@ func (c *clist[T]) Clear() {
 	clear(c.keys)
 }
 
-func (c *clist[T]) AllReverse() iter.Seq[*list.Element[T]] {
-	return func(yield func(*list.Element[T]) bool) {
-		for e := c.l.Back(); e != nil; e = e.Prev() {
+func (c *clist[T]) AllReverse() iter.Seq[*internal.Element[T]] {
+	return func(yield func(*internal.Element[T]) bool) {
+		for e := c.l.Back(); e != nil; e = c.l.Prev(e) {
 			if !yield(e) {
 				return
 			}
@@ -89,7 +89,7 @@ func (c *clist[T]) AllReverse() iter.Seq[*list.Element[T]] {
 
 func (c *clist[T]) AllForward() iter.Seq[T] {
 	return func(yield func(T) bool) {
-		for e := c.l.Front(); e != nil; e = e.Next() {
+		for e := c.l.Front(); e != nil; e = c.l.Next(e) {
 			if !yield(e.Value) {
 				return
 			}
@@ -158,7 +158,7 @@ func (c *ARC[T]) Promote(key T) bool {
 	}
 	if elt := c.t1.Lookup(key); elt != nil {
 		c.t1.Remove(elt)
-		c.t2.PushFront(key)
+		c.t2.PushFront(elt, key)
 		return true
 	}
 	return false
@@ -171,7 +171,7 @@ func (c *ARC[T]) EvictSkip(skip func(T) bool) (evicted T, ok bool) {
 				continue
 			}
 			tList.Remove(elm)
-			bList.PushFront(elm.Value)
+			bList.PushFront(elm, elm.Value)
 			return elm.Value, true
 		}
 		var zero T
@@ -201,25 +201,27 @@ func (c *ARC[T]) Add(key T) (ok bool) {
 	if elt := c.b2.Lookup(key); elt != nil {
 		c.b2Hit()
 		c.b2.Remove(elt)
-		c.t2.PushFront(key)
+		c.t2.PushFront(elt, key)
 		return true
 	}
 	if elt := c.b1.Lookup(key); elt != nil {
 		c.b1Hit()
 		c.b1.Remove(elt)
-		c.t2.PushFront(key)
+		c.t2.PushFront(elt, key)
 		return true
 	}
+
+	var removed *internal.Element[T]
 
 	// trim b tails, since total b+t increasing.
 	t := c.t1TargetLen()
 	for c.b1.Len() > c.tLen()-t && c.b1.Len() > 0 {
-		c.b1.RemoveTail()
+		removed = c.b1.RemoveTail()
 	}
 	for c.b2.Len() > t && c.b2.Len() > 0 {
-		c.b2.RemoveTail()
+		removed = c.b2.RemoveTail()
 	}
-	c.t1.PushFront(key)
+	c.t1.PushFront(removed, key)
 	return true
 }
 
