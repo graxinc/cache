@@ -8,7 +8,6 @@ require (
 	github.com/graxinc/syncmap v0.0.0-20241016221111-1f2c2c6f98d1
 	github.com/hashicorp/golang-lru/arc/v2 v2.0.7
 	github.com/pkg/profile v1.7.0
-	github.com/szyhf/go-container v0.0.0-20221021071115-bc30d479be15
 	golang.org/x/exp v0.0.0-20221025133541-111beb427cde
 )
 
