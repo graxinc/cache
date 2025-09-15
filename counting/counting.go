@@ -2,6 +2,7 @@ package counting
 
 import (
 	"iter"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -25,6 +26,8 @@ type Node[T Releaser] struct {
 	handles atomic.Int64
 
 	released atomic.Bool // for the node release
+
+	handlePool *sync.Pool
 }
 
 // v is Released after all Handles have been Released plus the node Release.
@@ -44,7 +47,14 @@ func (n *Node[T]) Handle() (_ *Handle[T], ok bool) {
 	if !n.inc() {
 		return &Handle[T]{}, false
 	}
-	return &Handle[T]{n: n}, true
+	if n.handlePool == nil {
+		return &Handle[T]{n: n}, true
+	}
+	h := n.handlePool.Get().(*Handle[T])
+	h.n = n
+	h.released.Store(false)
+	h.handlePool = n.handlePool
+	return h, true
 }
 
 // Intended for metrics.
@@ -77,8 +87,9 @@ func (n *Node[T]) dec() {
 }
 
 type Handle[T Releaser] struct {
-	n        *Node[T]
-	released atomic.Bool
+	n          *Node[T]
+	released   atomic.Bool
+	handlePool *sync.Pool
 }
 
 func (h *Handle[T]) Value() T {
@@ -88,6 +99,9 @@ func (h *Handle[T]) Value() T {
 func (h *Handle[T]) Release() {
 	if !h.released.Swap(true) {
 		h.n.dec()
+		if h.handlePool != nil {
+			h.handlePool.Put(h)
+		}
 	}
 }
 
@@ -96,7 +110,8 @@ func (h *Handle[T]) Release() {
 // to know all callers are done with the value.
 // Concurrent safe.
 type Cache[K comparable, V Releaser] struct {
-	cache *cache.Cache[K, *Node[V]]
+	cache      *cache.Cache[K, *Node[V]]
+	handlePool *sync.Pool
 }
 
 type CacheOptions[K any, V Releaser] struct {
@@ -133,7 +148,12 @@ func NewCache[K comparable, V Releaser](o CacheOptions[K, V]) Cache[K, V] {
 		PolicyCreator: o.PolicyCreator,
 		EvictSkip:     evictSkip,
 	})
-	return Cache[K, V]{c}
+	handlePool := &sync.Pool{
+		New: func() any {
+			return &Handle[V]{}
+		},
+	}
+	return Cache[K, V]{c, handlePool}
 }
 
 // Results ordered by most->least. Will block.
@@ -188,7 +208,7 @@ func (a Cache[K, V]) Set(k K, v V) *Handle[V] {
 // A min size of 1 will be used.
 // Caller must release Handle.
 func (a Cache[K, V]) SetS(k K, v V, size uint32) *Handle[V] {
-	n := NewNode(v)
+	n := &Node[V]{value: v, handlePool: a.handlePool}
 	h, _ := n.Handle()
 	a.cache.SetS(k, n, size)
 	return h
