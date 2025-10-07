@@ -160,7 +160,7 @@ func (a Cache[K, V]) All() iter.Seq2[K, Handle[V]] {
 // Caller must release Handle. Does not Promote.
 func (a Cache[K, V]) Peek(k K) (Handle[V], bool) {
 	for {
-		v, ok := a.cache.Get(k)
+		v, ok := a.cache.Peek(k)
 		if !ok {
 			return nil, false
 		}

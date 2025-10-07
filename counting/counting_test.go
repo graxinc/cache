@@ -218,6 +218,50 @@ func TestCache_evict(t *testing.T) {
 	}
 }
 
+func TestCache_peek(t *testing.T) {
+	t.Parallel()
+
+	t.Run("basic", func(t *testing.T) {
+		o := counting.CacheOptions[int, *releaseVal]{Capacity: 10}
+		c := counting.NewCache(o)
+
+		c.Set(1, &releaseVal{}).Release()
+		c.Set(3, &releaseVal{}).Release()
+
+		check := func(k int, want bool) {
+			t.Helper()
+			h, ok := c.Peek(k)
+			if ok != want {
+				t.Fatal(want, ok)
+			}
+			if ok {
+				h.Release()
+			}
+		}
+		check(1, true)
+		check(2, false)
+		check(3, true)
+		check(4, false)
+	})
+
+	t.Run("no promote", func(t *testing.T) {
+		o := counting.CacheOptions[int, *releaseVal]{Capacity: 2}
+		c := counting.NewCache(o)
+
+		for i := range 10 {
+			c.Set(i, &releaseVal{}).Release()
+			h, ok := c.Peek(2)
+			if ok {
+				h.Release()
+			}
+		}
+		_, ok := c.Get(2)
+		if ok {
+			t.Fatal("expected miss")
+		}
+	})
+}
+
 func TestCache_evictSkip(t *testing.T) {
 	t.Parallel()
 
