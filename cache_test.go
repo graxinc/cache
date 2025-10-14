@@ -118,6 +118,43 @@ func TestCache_peek(t *testing.T) {
 	}
 }
 
+func TestCache_evict(t *testing.T) {
+	t.Parallel()
+
+	var evicts string
+	evict := func(k string, v any) {
+		evicts += fmt.Sprint(k) + "=" + fmt.Sprint(v) + ","
+	}
+	a := cache.NewCache(cache.CacheOptions[string, any]{Capacity: 10, Evict: evict})
+
+	a.Set("a", "aa")
+	a.Set("b", "bb")
+	a.Set("c", "cc")
+	a.Get("a")
+
+	noSpace := a.Evict()
+	diffFatal(t, false, noSpace)
+	diffFatal(t, "b=bb,", evicts)
+	evicts = ""
+
+	noSpace = a.Evict()
+	diffFatal(t, false, noSpace)
+	diffFatal(t, "c=cc,", evicts)
+	evicts = ""
+
+	noSpace = a.Evict()
+	diffFatal(t, false, noSpace)
+	diffFatal(t, "a=aa,", evicts)
+	evicts = ""
+
+	noSpace = a.Evict()
+	diffFatal(t, true, noSpace)
+	diffFatal(t, "", evicts)
+
+	size := a.Capacity()
+	diffFatal(t, int64(10), size)
+}
+
 func TestCache_random(t *testing.T) {
 	t.Parallel()
 
