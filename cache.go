@@ -169,22 +169,33 @@ func (a *Cache[K, V]) SetS(k K, v V, size uint32) {
 	a.panicPolicyAdd(k)
 }
 
+func (a *Cache[K, V]) Evict() (noSpace bool) {
+	return a.evictSingle()
+}
+
+func (a *Cache[K, V]) evictSingle() (noSpace bool) {
+	k, ok := a.policyEvict()
+	if !ok {
+		return true
+	}
+	v := a.panicDelete(k)
+
+	a.length.Add(-1)
+	a.size.Add(-int64(v.size))
+	a.evict(k, v.v)
+	return false
+}
+
 func (a *Cache[K, V]) evicts() (noSpace bool) {
 	if a.evictBool.Swap(true) { // old was true, other already doing
 		return a.size.Load() >= a.cap.Load()
 	}
 	defer a.evictBool.Store(false)
 
-	for s := a.size.Load(); s >= a.cap.Load(); s = a.size.Load() {
-		k, ok := a.policyEvict()
-		if !ok {
+	for a.size.Load() >= a.cap.Load() {
+		if a.evictSingle() {
 			return true
 		}
-		v := a.panicDelete(k)
-
-		a.length.Add(-1)
-		a.size.Add(-int64(v.size))
-		a.evict(k, v.v)
 	}
 	return false
 }

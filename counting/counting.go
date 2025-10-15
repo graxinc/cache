@@ -199,6 +199,10 @@ func (a Cache[K, V]) SetS(k K, v V, size uint32) Handle[V] {
 	return h
 }
 
+func (a Cache[K, V]) Evict() (noSpace bool) {
+	return a.cache.Evict()
+}
+
 func (a Cache[K, V]) Len() int {
 	return a.cache.Len()
 }
