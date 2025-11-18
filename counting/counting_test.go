@@ -1,11 +1,13 @@
 package counting_test
 
 import (
+	"math/rand"
 	"slices"
 	"sync"
 	"testing"
 
 	"github.com/graxinc/cache/counting"
+	"github.com/pkg/profile"
 )
 
 func TestNode_incRelease(t *testing.T) {
@@ -371,6 +373,66 @@ func TestCache_evictSkip_noSpace(t *testing.T) {
 	}
 }
 
+func BenchmarkCache_memory(b *testing.B) {
+	var keys []int
+	for i := range 1_000_000 {
+		keys = append(keys, i)
+	}
+
+	run := func(b *testing.B, onceHandle bool) {
+		b.ReportAllocs()
+
+		rando := rand.New(rand.NewSource(5)) //nolint:gosec
+
+		a := counting.NewCache(counting.CacheOptions[int, releaseValNoop]{Capacity: int64(len(keys) / 2)})
+
+		getSet := func() {
+			idx := rando.Intn(len(keys))
+			k := keys[idx]
+
+			if onceHandle {
+				h, ok := a.OnceGet(k)
+				if ok {
+					h.Release()
+					return
+				}
+				h = a.OnceSet(k, releaseValNoop{})
+				h.Release()
+				return
+			}
+
+			h, ok := a.Get(k)
+			if ok {
+				h.Release()
+				return
+			}
+			h = a.Set(k, releaseValNoop{})
+			h.Release()
+		}
+
+		// fill
+		for _, k := range keys {
+			if onceHandle {
+				h := a.OnceSet(k, releaseValNoop{})
+				h.Release()
+			} else {
+				h := a.Set(k, releaseValNoop{})
+				h.Release()
+			}
+		}
+
+		defer profile.Start(profile.MemProfile).Stop()
+
+		for range b.N {
+			for range 1000 {
+				getSet()
+			}
+		}
+	}
+	b.Run("normal handle", func(b *testing.B) { run(b, false) })
+	b.Run("once handle", func(b *testing.B) { run(b, true) })
+}
+
 type releaseVal struct {
 	mu  sync.Mutex
 	rel int
@@ -387,3 +449,7 @@ func (r *releaseVal) releases() int {
 	defer r.mu.Unlock()
 	return r.rel
 }
+
+type releaseValNoop struct{}
+
+func (releaseValNoop) Release() {}
