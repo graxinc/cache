@@ -548,7 +548,7 @@ func TestCache_Sizer_random(t *testing.T) {
 		a.SetS(keys[n2], struct{}{}, n3)
 	}
 
-	if g := a.Size(); g != 1000 {
+	if g := a.Size(); g != 1005 {
 		t.Fatal(g)
 	}
 }

@@ -1,5 +1,9 @@
 package internal
 
+import (
+	"iter"
+)
+
 // originally from github.com/szyhf/go-container/list
 
 // Element is an element of a linked list.
@@ -30,7 +34,7 @@ func (l *List[T]) Init() *List[T] {
 	return l
 }
 
-func New[T any]() *List[T] {
+func NewList[T any]() *List[T] {
 	return new(List[T]).Init()
 }
 
@@ -137,4 +141,75 @@ func (l *List[T]) move(e, at *Element[T]) {
 	e.next = at.next
 	e.prev.next = e
 	e.next.prev = e
+}
+
+type KeyList[T comparable] struct {
+	l    *List[T]
+	keys map[T]*Element[T]
+}
+
+func NewKeyList[T comparable]() KeyList[T] {
+	return KeyList[T]{
+		l:    NewList[T](),
+		keys: make(map[T]*Element[T]),
+	}
+}
+
+func (c *KeyList[T]) Has(key T) bool {
+	_, ok := c.keys[key]
+	return ok
+}
+
+// do not mod result. might return nil.
+func (c *KeyList[T]) Lookup(key T) *Element[T] {
+	return c.keys[key]
+}
+
+func (c *KeyList[T]) MoveToFront(elt *Element[T]) {
+	c.l.MoveToFront(elt)
+}
+
+func (c *KeyList[T]) PushFront(buf *Element[T], key T) {
+	c.keys[key] = c.l.PushFront(buf, key)
+}
+
+func (c *KeyList[T]) Remove(elt *Element[T]) {
+	delete(c.keys, elt.Value)
+	c.l.Remove(elt)
+}
+
+// list must not be empty.
+func (c *KeyList[T]) RemoveTail() *Element[T] {
+	elt := c.l.Back()
+	c.Remove(elt)
+	return elt
+}
+
+func (c *KeyList[T]) Len() int {
+	return c.l.Len()
+}
+
+func (c *KeyList[T]) Clear() {
+	c.l.Init()
+	clear(c.keys)
+}
+
+func (c *KeyList[T]) AllReverse() iter.Seq[*Element[T]] {
+	return func(yield func(*Element[T]) bool) {
+		for e := c.l.Back(); e != nil; e = c.l.Prev(e) {
+			if !yield(e) {
+				return
+			}
+		}
+	}
+}
+
+func (c *KeyList[T]) AllForward() iter.Seq[T] {
+	return func(yield func(T) bool) {
+		for e := c.l.Front(); e != nil; e = c.l.Next(e) {
+			if !yield(e.Value) {
+				return
+			}
+		}
+	}
 }
