@@ -84,11 +84,11 @@ func TestARC_compareImpl(t *testing.T) {
 	}
 
 	cases := []testCase{
-		{2, 798_277, 1_629_236},
-		{4, 402_442, 807_548},
-		{10, 183_685, 315_757},
-		{100, 19_002, 19146},
-		{200, 8631, 9048},
+		{2, 798_277, 1_622_440},
+		{4, 402_442, 803_115},
+		{10, 183_685, 306_237},
+		{100, 19_002, 23_781},
+		{200, 8631, 8398},
 	}
 	for _, c := range cases {
 		t.Run(fmt.Sprintf("itersPerScan=%v", c.itersPerScan), func(t *testing.T) { do(t, c) })
@@ -103,11 +103,16 @@ func TestARC_random(t *testing.T) {
 	const (
 		cap        = 1000
 		keys       = cap * 4
-		iterations = keys * 2
+		iterations = keys * 1000
 	)
 	p := policy.NewARC[int]()
 
 	var hit, miss, evicts, size int64
+
+	t1TargetFractions := make(map[int]struct{})
+	for i := range 10 {
+		t1TargetFractions[i] = struct{}{}
+	}
 
 	do := func() {
 		if rando.Intn(2) == 0 {
@@ -130,15 +135,19 @@ func TestARC_random(t *testing.T) {
 				miss++
 			}
 		}
+
+		t := int(p.ARCParams().T1TargetFraction * 10)
+		delete(t1TargetFractions, t)
 	}
 
 	for range iterations {
 		do()
 	}
 
-	if hit != 857 || miss != 3175 || evicts != 2102 || size != 1000 {
+	if hit != 499_535 || miss != 1_502_201 || evicts != 1_498_196 || size != 1000 {
 		t.Fatal(hit, miss, evicts, size)
 	}
+	diffFatal(t, make(map[int]struct{}), t1TargetFractions)
 }
 
 func TestARC_evict(t *testing.T) {
@@ -283,6 +292,184 @@ func TestARC_clear(t *testing.T) {
 	}
 	if p.Promote(2) {
 		t.Fatal("expected false")
+	}
+}
+
+func TestARC_AddExisting(t *testing.T) {
+	t.Parallel()
+
+	p := policy.NewARC[int]()
+
+	p.Add(1)
+	p.Add(2)
+	p.Promote(1)
+
+	check := func() {
+		all := slices.Collect(p.Values())
+		diffFatal(t, []int{2, 1}, all)
+
+		got := p.ARCParams()
+		diffFatal(t, policy.ARCParams{T1Len: 1, T2Len: 1}, got)
+	}
+
+	check()
+
+	ok := p.Add(1)
+	diffFatal(t, false, ok)
+	ok = p.Add(2)
+	diffFatal(t, false, ok)
+
+	check()
+}
+
+func TestARC_PromoteMissing(t *testing.T) {
+	t.Parallel()
+
+	p := policy.NewARC[int]()
+
+	ok := p.Promote(1)
+	diffFatal(t, false, ok)
+}
+
+func TestARC_adaptWhileEmpty(t *testing.T) {
+	t.Parallel()
+	p := policy.NewARC[int]()
+
+	p.Add(1)
+	p.Add(2)
+	p.Add(3)
+	// evict them all (to b1)
+
+	got := p.ARCParams()
+	diffFatal(t, policy.ARCParams{T1Len: 3}, got)
+
+	p.Evict()
+	p.Evict()
+	p.Evict()
+
+	got = p.ARCParams()
+	diffFatal(t, policy.ARCParams{B1Len: 3}, got)
+
+	// t1+t2 = 0, add 1 back (b1 hit)
+	p.Add(1)
+
+	// ensuring we don't get NaN here for T1TargetFraction.
+	got = p.ARCParams()
+	diffFatal(t, policy.ARCParams{T2Len: 1, B1Len: 2, T1TargetFraction: 1}, got)
+}
+
+func TestARC_params(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]struct {
+		setup      func(*testing.T, *policy.ARC[int])
+		wantParams policy.ARCParams
+		wantItems  []int
+	}{
+		"add_single_item": {
+			setup: func(t *testing.T, p *policy.ARC[int]) {
+				p.Add(1)
+			},
+			wantParams: policy.ARCParams{T1Len: 1},
+			wantItems:  []int{1},
+		},
+		"add_multiple_items_go_to_t1": {
+			setup: func(t *testing.T, p *policy.ARC[int]) {
+				p.Add(1)
+				p.Add(2)
+				p.Add(3)
+			},
+			wantParams: policy.ARCParams{T1Len: 3},
+			wantItems:  []int{3, 2, 1},
+		},
+		"promote_moves_t1_to_t2": {
+			setup: func(t *testing.T, p *policy.ARC[int]) {
+				p.Add(1)
+				p.Add(2)
+				p.Add(3)
+				p.Promote(2) // moves from t1 to t2
+			},
+			wantParams: policy.ARCParams{T1Len: 2, T2Len: 1},
+			wantItems:  []int{3, 2, 1}, // 2 is now in t2
+		},
+		"promote_in_t2_moves_to_front": {
+			setup: func(t *testing.T, p *policy.ARC[int]) {
+				p.Add(1)
+				p.Add(2)
+				p.Promote(1) // t1 -> t2
+				p.Promote(2) // t1 -> t2
+				p.Promote(1) // move to front in t2
+			},
+			wantParams: policy.ARCParams{T2Len: 2},
+			wantItems:  []int{1, 2}, // 1 promoted to front
+		},
+		"evict_from_t1_goes_to_b1": {
+			setup: func(t *testing.T, p *policy.ARC[int]) {
+				p.Add(1)
+				p.Add(2)
+				p.Evict()
+			},
+			wantParams: policy.ARCParams{T1Len: 1, B1Len: 1},
+			wantItems:  []int{2},
+		},
+		"evict_from_t2_goes_to_b2": {
+			setup: func(t *testing.T, p *policy.ARC[int]) {
+				p.Add(1)
+				p.Add(2)
+				p.Promote(1) // to t2
+				p.Promote(2) // to t2
+				p.Evict()    // evicts from t2
+			},
+			wantParams: policy.ARCParams{T2Len: 1, B2Len: 1},
+			wantItems:  []int{2},
+		},
+		"b1_hit_adds_to_t2": {
+			setup: func(t *testing.T, p *policy.ARC[int]) {
+				p.Add(1)
+				p.Add(2)
+				p.Evict() // to b1
+				p.Add(1)  // b1 hit: 1 goes to t2
+			},
+			wantParams: policy.ARCParams{T1Len: 1, T2Len: 1, T1TargetFraction: 1},
+			wantItems:  []int{2, 1},
+		},
+		"b2_hit_adds_to_t2": {
+			setup: func(t *testing.T, p *policy.ARC[int]) {
+				p.Add(1)
+				p.Promote(1) // to t2
+				p.Evict()    // to b2
+				p.Add(1)     // b2 hit: 1 goes to t2
+			},
+			wantParams: policy.ARCParams{T2Len: 1},
+			wantItems:  []int{1},
+		},
+		"mixed_with_recency_and_frequency": {
+			setup: func(t *testing.T, p *policy.ARC[int]) {
+				p.Add(1)
+				p.Add(2)
+				p.Promote(1) // t1 [2], t2 [1]
+				p.Promote(1)
+				p.Add(3)     // t1 [3,2]
+				p.Promote(2) // t1 [3], t2 [2,1]
+			},
+			wantParams: policy.ARCParams{T1Len: 1, T2Len: 2},
+			wantItems:  []int{3, 2, 1},
+		},
+	}
+
+	for n, c := range cases {
+		t.Run(n, func(t *testing.T) {
+			t.Parallel()
+			p := policy.NewARC[int]()
+
+			c.setup(t, p)
+
+			gotParams := p.ARCParams()
+			diffFatal(t, c.wantParams, gotParams)
+
+			got := slices.Collect(p.Values())
+			diffFatal(t, c.wantItems, got)
+		})
 	}
 }
 

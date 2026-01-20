@@ -26,93 +26,21 @@ type Policy[T any] interface {
 	Values() iter.Seq[T]
 }
 
-type clist[T comparable] struct {
-	l    *internal.List[T]
-	keys map[T]*internal.Element[T]
-}
-
-func makeClist[T comparable]() clist[T] {
-	return clist[T]{
-		l:    internal.New[T](),
-		keys: make(map[T]*internal.Element[T]),
-	}
-}
-
-func (c *clist[T]) Has(key T) bool {
-	_, ok := c.keys[key]
-	return ok
-}
-
-// do not mod result. might return nil.
-func (c *clist[T]) Lookup(key T) *internal.Element[T] {
-	return c.keys[key]
-}
-
-func (c *clist[T]) MoveToFront(elt *internal.Element[T]) {
-	c.l.MoveToFront(elt)
-}
-
-func (c *clist[T]) PushFront(buf *internal.Element[T], key T) {
-	c.keys[key] = c.l.PushFront(buf, key)
-}
-
-func (c *clist[T]) Remove(elt *internal.Element[T]) {
-	delete(c.keys, elt.Value)
-	c.l.Remove(elt)
-}
-
-// list must not be empty.
-func (c *clist[T]) RemoveTail() *internal.Element[T] {
-	elt := c.l.Back()
-	c.Remove(elt)
-	return elt
-}
-
-func (c *clist[T]) Len() int {
-	return c.l.Len()
-}
-
-func (c *clist[T]) Clear() {
-	c.l.Init()
-	clear(c.keys)
-}
-
-func (c *clist[T]) AllReverse() iter.Seq[*internal.Element[T]] {
-	return func(yield func(*internal.Element[T]) bool) {
-		for e := c.l.Back(); e != nil; e = c.l.Prev(e) {
-			if !yield(e) {
-				return
-			}
-		}
-	}
-}
-
-func (c *clist[T]) AllForward() iter.Seq[T] {
-	return func(yield func(T) bool) {
-		for e := c.l.Front(); e != nil; e = c.l.Next(e) {
-			if !yield(e.Value) {
-				return
-			}
-		}
-	}
-}
-
 type ARC[T comparable] struct {
-	// immutable
-	t1 clist[T]
-	t2 clist[T]
-	b1 clist[T]
-	b2 clist[T]
+	t1 internal.KeyList[T]
+	t2 internal.KeyList[T]
+	b1 internal.KeyList[T]
+	b2 internal.KeyList[T]
 
-	f float64
+	t1TargetFraction float64 // of t1+t2 space, 0-1.
 }
 
 func NewARC[T comparable]() *ARC[T] {
 	return &ARC[T]{
-		t1: makeClist[T](),
-		t2: makeClist[T](),
-		b1: makeClist[T](),
-		b2: makeClist[T](),
+		t1: internal.NewKeyList[T](),
+		t2: internal.NewKeyList[T](),
+		b1: internal.NewKeyList[T](),
+		b2: internal.NewKeyList[T](),
 	}
 }
 
@@ -121,7 +49,7 @@ func (c *ARC[T]) Clear() {
 	c.t2.Clear()
 	c.b1.Clear()
 	c.b2.Clear()
-	c.f = 0
+	c.t1TargetFraction = 0
 }
 
 func (c *ARC[T]) Values() iter.Seq[T] {
@@ -165,7 +93,7 @@ func (c *ARC[T]) Promote(key T) bool {
 }
 
 func (c *ARC[T]) EvictSkip(skip func(T) bool) (evicted T, ok bool) {
-	tRemove := func(tList, bList clist[T]) (T, bool) {
+	tRemove := func(tList, bList internal.KeyList[T]) (T, bool) {
 		for elm := range tList.AllReverse() {
 			if skip(elm.Value) {
 				continue
@@ -198,6 +126,7 @@ func (c *ARC[T]) Add(key T) (ok bool) {
 		return false
 	}
 
+	// ghost lists check, adapts t1TargetFraction.
 	if elt := c.b2.Lookup(key); elt != nil {
 		c.b2Hit()
 		c.b2.Remove(elt)
@@ -214,6 +143,8 @@ func (c *ARC[T]) Add(key T) (ok bool) {
 	var removed *internal.Element[T]
 
 	// trim b tails, since total b+t increasing.
+	// since t slides within t+b, b1 gets smaller as t1 gets bigger.
+
 	t := c.t1TargetLen()
 	for c.b1.Len() > c.tLen()-t && c.b1.Len() > 0 {
 		removed = c.b1.RemoveTail()
@@ -225,34 +156,50 @@ func (c *ARC[T]) Add(key T) (ok bool) {
 	return true
 }
 
+type ARCParams struct {
+	T1Len, T2Len     int
+	B1Len, B2Len     int
+	T1TargetFraction float64
+}
+
+func (c *ARC[T]) ARCParams() ARCParams {
+	return ARCParams{T1Len: c.t1.Len(), T2Len: c.t2.Len(), B1Len: c.b1.Len(), B2Len: c.b2.Len(), T1TargetFraction: c.t1TargetFraction}
+}
+
 // b1 must not be empty.
 func (c *ARC[T]) b1Hit() {
-	delta := 1
+	delta := 1.0
 	if b1, b2 := c.b1.Len(), c.b2.Len(); b2 > b1 {
-		delta = b2 / b1
+		delta = float64(b2) / float64(b1)
 	}
-	c.setF(delta)
+	c.setT1TargetFraction(delta)
 }
 
 // b2 must not be empty.
 func (c *ARC[T]) b2Hit() {
-	delta := 1
+	delta := 1.0
 	if b1, b2 := c.b1.Len(), c.b2.Len(); b1 > b2 {
-		delta = b1 / b2
+		delta = float64(b1) / float64(b2)
 	}
-	c.setF(-delta)
+	c.setT1TargetFraction(-delta)
 }
 
 func (c *ARC[T]) t1TargetLen() int {
-	f := math.RoundToEven(c.f * float64(c.tLen()))
-	return int(f)
+	t := c.t1TargetFraction * float64(c.tLen())
+	return int(math.RoundToEven(t))
 }
 
-func (c *ARC[T]) setF(delta int) {
-	t := c.t1TargetLen()
-	t += delta
-	t = min(max(t, 0), c.tLen()) // bound
-	c.f = float64(t) / float64(c.tLen())
+// delta must not be zero.
+func (c *ARC[T]) setT1TargetFraction(delta float64) {
+	tLen := float64(c.tLen())
+
+	// t1TargetLen = t1TargetFraction * tLen
+	// t1TargetFraction = ((t1TargetLen + delta) / tLen), simplifies to:
+	v := c.t1TargetFraction + (delta / tLen)
+
+	// bound 0-1.
+	v = min(max(v, 0), 1)
+	c.t1TargetFraction = v
 }
 
 func (c *ARC[T]) tLen() int {
