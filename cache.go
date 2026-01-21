@@ -264,6 +264,13 @@ func (a *Cache[K, V]) SetAvailableCapacity(available, max int64) {
 	a.SetCapacity(new)
 }
 
+func (a *Cache[K, V]) Stats() map[string]any {
+	a.policyMu.Lock()
+	defer a.policyMu.Unlock()
+
+	return map[string]any{"policy": a.policy.Stats()}
+}
+
 func (a *Cache[K, V]) get(k K) (*CacheValue[V], bool) {
 	v, ok := a.items.Get(k)
 	if !ok || a.expired(v.expire) {

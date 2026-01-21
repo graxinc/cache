@@ -553,6 +553,30 @@ func TestCache_Sizer_random(t *testing.T) {
 	}
 }
 
+func TestCache_Stats(t *testing.T) {
+	t.Parallel()
+
+	a := cache.NewCache(cache.CacheOptions[int, struct{}]{})
+
+	a.Set(1, struct{}{})
+	a.Set(2, struct{}{})
+	a.Evict()
+	a.Set(3, struct{}{})
+	a.Promote(3)
+
+	got := a.Stats()
+	want := map[string]any{
+		"policy": map[string]any{
+			"b1Len":            int(1),
+			"b2Len":            int(0),
+			"t1Len":            int(1),
+			"t1TargetFraction": float64(0),
+			"t2Len":            int(1),
+		},
+	}
+	diffFatal(t, want, got)
+}
+
 func BenchmarkCache_memory(b *testing.B) {
 	rando := rand.New(rand.NewSource(5)) //nolint:gosec
 
