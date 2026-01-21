@@ -244,3 +244,7 @@ func (a Cache[K, V]) SwapCapacity(old, new int64) (swapped bool) {
 func (a Cache[K, V]) SetAvailableCapacity(available, max int64) {
 	a.cache.SetAvailableCapacity(available, max)
 }
+
+func (a Cache[K, V]) Stats() map[string]any {
+	return a.cache.Stats()
+}

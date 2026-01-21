@@ -24,6 +24,8 @@ type Policy[T any] interface {
 	// Hottest to coldest.
 	// Safe for RLock.
 	Values() iter.Seq[T]
+
+	Stats() map[string]any
 }
 
 type ARC[T comparable] struct {
@@ -163,7 +165,24 @@ type ARCParams struct {
 }
 
 func (c *ARC[T]) ARCParams() ARCParams {
-	return ARCParams{T1Len: c.t1.Len(), T2Len: c.t2.Len(), B1Len: c.b1.Len(), B2Len: c.b2.Len(), T1TargetFraction: c.t1TargetFraction}
+	return ARCParams{
+		T1Len:            c.t1.Len(),
+		T2Len:            c.t2.Len(),
+		B1Len:            c.b1.Len(),
+		B2Len:            c.b2.Len(),
+		T1TargetFraction: c.t1TargetFraction,
+	}
+}
+
+func (c *ARC[T]) Stats() map[string]any {
+	p := c.ARCParams()
+	return map[string]any{
+		"t1Len":            p.T1Len,
+		"t2Len":            p.T2Len,
+		"b1Len":            p.B1Len,
+		"b2Len":            p.B2Len,
+		"t1TargetFraction": p.T1TargetFraction,
+	}
 }
 
 // b1 must not be empty.
