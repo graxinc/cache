@@ -17,9 +17,51 @@ type Map[K, V any] interface {
 	Delete(K) (_ V, exists bool)
 }
 
+type KMap[V any] interface {
+	Get() (_ V, ok bool)
+	Add(v V) (_ V, exists bool)
+	Delete() (_ V, exists bool)
+}
+
+type builtin[K comparable, V any] map[K]V
+
+func (m builtin[K, V]) Get(k K) (V, bool) {
+	v, ok := m[k]
+	return v, ok
+}
+
+func (m builtin[K, V]) Add(k K, v V) (V, bool) {
+	ev, ok := m[k]
+	m[k] = v
+	return ev, ok
+}
+
+func (m builtin[K, V]) Delete(k K) (V, bool) {
+	v, ok := m[k]
+	delete(m, k)
+	return v, ok
+}
+
+type kBuiltin[K comparable, V any] struct {
+	k K
+	m builtin[K, V]
+}
+
+func (m kBuiltin[K, V]) Get() (V, bool) {
+	return m.m.Get(m.k)
+}
+
+func (m kBuiltin[K, V]) Add(v V) (V, bool) {
+	return m.m.Add(m.k, v)
+}
+
+func (m kBuiltin[K, V]) Delete() (V, bool) {
+	return m.m.Delete(m.k)
+}
+
 type Builtin[K comparable, V any] struct {
 	mu sync.RWMutex
-	m  map[K]V
+	m  builtin[K, V]
 }
 
 func NewBuiltin[K comparable, V any]() *Builtin[K, V] {
@@ -29,24 +71,19 @@ func NewBuiltin[K comparable, V any]() *Builtin[K, V] {
 func (m *Builtin[K, V]) Get(k K) (V, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	v, ok := m.m[k]
-	return v, ok
+	return m.m.Get(k)
 }
 
 func (m *Builtin[K, V]) Add(k K, v V) (V, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	ev, ok := m.m[k]
-	m.m[k] = v
-	return ev, ok
+	return m.m.Add(k, v)
 }
 
 func (m *Builtin[K, V]) Delete(k K) (V, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	v, ok := m.m[k]
-	delete(m.m, k)
-	return v, ok
+	return m.m.Delete(k)
 }
 
 type Sync[K comparable, V any] struct {
@@ -105,4 +142,11 @@ func (m Bucketed[K, V]) Delete(k K) (V, bool) {
 func (m Bucketed[K, V]) bucket(k K) *Builtin[K, V] {
 	idx := uint64(k) % m.bucketsLen
 	return m.buckets[idx]
+}
+
+// Caller must unlock.
+func (m Bucketed[K, V]) Bucket(k K) (_ KMap[V], unlock func()) {
+	b := m.bucket(k)
+	b.mu.Lock()
+	return kBuiltin[K, V]{k, b.m}, b.mu.Unlock
 }
