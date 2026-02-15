@@ -2,6 +2,7 @@ package counting
 
 import (
 	"iter"
+	"math"
 	"sync/atomic"
 	"time"
 
@@ -27,9 +28,10 @@ type Node[T Releaser] struct {
 	value T
 
 	// First to hit -1 runs the Value.Release.
-	handles atomic.Int64
+	handles atomic.Int32
 
-	released atomic.Bool // for the node release
+	// 0 not released, 1 node released, 2 value released.
+	released atomic.Int32
 }
 
 // v is Released after all Handles have been Released plus the node Release.
@@ -38,7 +40,7 @@ func NewNode[T Releaser](v T) *Node[T] {
 }
 
 func (n *Node[T]) Release() {
-	if !n.released.Swap(true) {
+	if n.released.CompareAndSwap(0, 1) {
 		n.dec()
 	}
 }
@@ -50,6 +52,15 @@ func (n *Node[T]) Handle() (_ Handle[T], ok bool) {
 		return nil, false
 	}
 	return &handle[T]{n: n}, true
+}
+
+// Node already released when !ok.
+// Caller must release Handle, ONLY once.
+func (n *Node[T]) OnceHandle() (_ Handle[T], ok bool) {
+	if !n.inc() {
+		return nil, false
+	}
+	return onceHandle[T]{n}, true
 }
 
 // Intended for metrics.
@@ -67,6 +78,9 @@ func (n *Node[T]) inc() (ok bool) {
 		if old < 0 {
 			return false
 		}
+		if old >= math.MaxInt32-2 {
+			continue // max handles, busy wait
+		}
 		if !n.handles.CompareAndSwap(old, old+1) {
 			continue // concurrent, try again
 		}
@@ -75,8 +89,8 @@ func (n *Node[T]) inc() (ok bool) {
 }
 
 func (n *Node[T]) dec() {
-	// going past -1 protected via bool swaps
-	if v := n.handles.Add(-1); v < 0 {
+	v := n.handles.Add(-1)
+	if v < 0 && n.released.CompareAndSwap(1, 2) {
 		n.value.Release()
 	}
 }
@@ -94,6 +108,18 @@ func (h *handle[T]) Release() {
 	if !h.released.Swap(true) {
 		h.n.dec()
 	}
+}
+
+type onceHandle[T Releaser] struct {
+	n *Node[T]
+}
+
+func (h onceHandle[T]) Value() T {
+	return h.n.Value()
+}
+
+func (h onceHandle[T]) Release() {
+	h.n.dec()
 }
 
 // Similar to cache.Cache except values are Released when evicted, but only after all the
@@ -170,6 +196,19 @@ func (a Cache[K, V]) Peek(k K) (Handle[V], bool) {
 	}
 }
 
+// Caller must release Handle. Does not Promote.
+func (a Cache[K, V]) OncePeek(k K) (Handle[V], bool) {
+	for {
+		v, ok := a.cache.Peek(k)
+		if !ok {
+			return nil, false
+		}
+		if h, ok := v.OnceHandle(); ok {
+			return h, true
+		} // else already released, get fresh
+	}
+}
+
 func (a Cache[K, V]) Promote(k K) {
 	a.cache.Promote(k)
 }
@@ -184,9 +223,24 @@ func (a Cache[K, V]) Get(k K) (Handle[V], bool) {
 	return h, true
 }
 
+// Caller must release Handle, ONLY once. Promotes.
+func (a Cache[K, V]) OnceGet(k K) (Handle[V], bool) {
+	h, ok := a.OncePeek(k)
+	if !ok {
+		return nil, false
+	}
+	a.cache.Promote(k)
+	return h, true
+}
+
 // Alias for SetS(k,v,1).
 func (a Cache[K, V]) Set(k K, v V) Handle[V] {
 	return a.SetS(k, v, 1)
+}
+
+// Alias for OnceSetS(k,v,1).
+func (a Cache[K, V]) OnceSet(k K, v V) Handle[V] {
+	return a.OnceSetS(k, v, 1)
 }
 
 // Replaces existing values, which are evicted.
@@ -195,6 +249,16 @@ func (a Cache[K, V]) Set(k K, v V) Handle[V] {
 func (a Cache[K, V]) SetS(k K, v V, size uint32) Handle[V] {
 	n := NewNode(v)
 	h, _ := n.Handle()
+	a.cache.SetS(k, n, size)
+	return h
+}
+
+// Replaces existing values, which are evicted.
+// A min size of 1 will be used.
+// Caller must release Handle, ONLY once.
+func (a Cache[K, V]) OnceSetS(k K, v V, size uint32) Handle[V] {
+	n := NewNode(v)
+	h, _ := n.OnceHandle()
 	a.cache.SetS(k, n, size)
 	return h
 }
