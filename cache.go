@@ -40,8 +40,8 @@ type mutexLocker struct {
 	sync.Mutex
 }
 
-func (l *mutexLocker) RLock()   { l.Mutex.Lock() }
-func (l *mutexLocker) RUnlock() { l.Mutex.Unlock() }
+func (l *mutexLocker) RLock()   { l.Lock() }
+func (l *mutexLocker) RUnlock() { l.Unlock() }
 
 // Concurrent safe.
 type Cache[K, V any] struct {
