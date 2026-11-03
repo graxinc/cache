@@ -19,13 +19,15 @@ type CacheValue[V any] struct {
 }
 
 type CacheOptions[K, V any] struct {
-	Expiration    time.Duration // Defaults to forever.
-	Evict         func(K, V)    // Might be called concurrently.
-	EvictSkip     func(K, V) bool
-	Capacity      int64                              // Defaults to 100.
-	RLock         bool                               // Whether to use an RLock when possible. Defaults to false.
-	MapCreator    func() maps.Map[K, *CacheValue[V]] // defaults to maps.Sync.
-	PolicyCreator func() policy.Policy[K]            // defaults to policy.NewARC.
+	Expiration time.Duration // Defaults to forever.
+	Evict      func(K, V)    // Might be called concurrently.
+	EvictSkip  func(K, V) bool
+	// With EvictSkip, a SetS during another evict frees its own size rather than immediately evicting its item.
+	EvictSkipSelfEvict bool
+	Capacity           int64                              // Defaults to 100.
+	RLock              bool                               // Whether to use an RLock when possible. Defaults to false.
+	MapCreator         func() maps.Map[K, *CacheValue[V]] // defaults to maps.Sync.
+	PolicyCreator      func() policy.Policy[K]            // defaults to policy.NewARC.
 }
 
 type locker interface {
@@ -53,12 +55,16 @@ type Cache[K, V any] struct {
 	evictBool       atomic.Bool
 	evict           func(K, V)
 	evictSkip       func(K, V) bool // might be nil
+	selfEvict       bool
 	items           maps.Map[K, *CacheValue[V]]
 	policy          policy.Policy[K]
 
 	cap    atomic.Int64
 	size   atomic.Int64
 	length atomic.Int64
+
+	setImmediateEvicts atomic.Int64
+	setSelfEvicts      atomic.Int64
 }
 
 func NewCache[K comparable, V any](o CacheOptions[K, V]) *Cache[K, V] {
@@ -97,6 +103,7 @@ func NewCache[K comparable, V any](o CacheOptions[K, V]) *Cache[K, V] {
 		expirationEpoch: time.Now(),
 		evict:           o.Evict,
 		evictSkip:       o.EvictSkip,
+		selfEvict:       o.EvictSkipSelfEvict,
 		items:           o.MapCreator(),
 		policy:          o.PolicyCreator(),
 		policyMu:        policyMu,
@@ -145,12 +152,13 @@ func (a *Cache[K, V]) SetS(k K, v V, size uint32) {
 	// caller will get past items.Add until items.Delete (after eviction),
 	// keeping the set of keys between policy and items consistent.
 
-	if a.evictSkip != nil && a.evicts() {
+	size = max(1, size)
+
+	if a.evictSkip != nil && a.evictsFor(size) {
+		a.setImmediateEvicts.Add(1)
 		a.evict(k, v)
 		return
 	}
-
-	size = max(1, size)
 
 	av := &CacheValue[V]{expire: a.expire(), size: size, v: v}
 
@@ -170,20 +178,21 @@ func (a *Cache[K, V]) SetS(k K, v V, size uint32) {
 }
 
 func (a *Cache[K, V]) Evict() (noSpace bool) {
-	return a.evictSingle()
+	_, noSpace = a.evictSingle()
+	return noSpace
 }
 
-func (a *Cache[K, V]) evictSingle() (noSpace bool) {
+func (a *Cache[K, V]) evictSingle() (freed uint32, noSpace bool) {
 	k, ok := a.policyEvict()
 	if !ok {
-		return true
+		return 0, true
 	}
 	v := a.panicDelete(k)
 
 	a.length.Add(-1)
 	a.size.Add(-int64(v.size))
 	a.evict(k, v.v)
-	return false
+	return v.size, false
 }
 
 func (a *Cache[K, V]) evicts() (noSpace bool) {
@@ -192,8 +201,36 @@ func (a *Cache[K, V]) evicts() (noSpace bool) {
 	}
 	defer a.evictBool.Store(false)
 
+	return a.evictsToCap()
+}
+
+// For evictSkip callers, which evict before inserting. With selfEvict, when
+// another evict is running, frees at least size itself rather than immediately
+// evicting the item, so inserts can't outpace eviction.
+func (a *Cache[K, V]) evictsFor(size uint32) (noSpace bool) {
+	if !a.selfEvict {
+		return a.evicts()
+	}
+	if !a.evictBool.Swap(true) { // old was false, no other evict loop running so run it here
+		defer a.evictBool.Store(false)
+		return a.evictsToCap()
+	}
+
+	var freed uint32
+	for freed < size && a.size.Load() >= a.cap.Load() {
+		n, noSpace := a.evictSingle()
+		if noSpace {
+			return true
+		}
+		a.setSelfEvicts.Add(1)
+		freed += n
+	}
+	return false
+}
+
+func (a *Cache[K, V]) evictsToCap() (noSpace bool) {
 	for a.size.Load() >= a.cap.Load() {
-		if a.evictSingle() {
+		if _, noSpace := a.evictSingle(); noSpace {
 			return true
 		}
 	}
@@ -268,7 +305,11 @@ func (a *Cache[K, V]) Stats() map[string]any {
 	a.policyMu.Lock()
 	defer a.policyMu.Unlock()
 
-	return map[string]any{"policy": a.policy.Stats()}
+	return map[string]any{
+		"policy":             a.policy.Stats(),
+		"setImmediateEvicts": a.setImmediateEvicts.Load(), // evictSkip SetS items evicted instead of inserted, including while another evict ran
+		"setSelfEvicts":      a.setSelfEvicts.Load(),      // evictions by SetS callers while another evict ran
+	}
 }
 
 func (a *Cache[K, V]) get(k K) (*CacheValue[V], bool) {
