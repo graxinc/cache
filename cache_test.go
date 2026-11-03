@@ -426,6 +426,68 @@ func TestCache_growPastCapacity(t *testing.T) {
 	})
 }
 
+func TestCache_evictSkipSelfEvict_concurrentSetAtCapacity(t *testing.T) {
+	t.Parallel()
+
+	never := func(int, struct{}) bool { return false }
+	a := cache.NewCache(cache.CacheOptions[int, struct{}]{Capacity: 512, EvictSkip: never, EvictSkipSelfEvict: true})
+	for i := range 1024 {
+		a.Set(-i-1, struct{}{})
+	}
+
+	// each round's keys are fewer than capacity and newest, so all must stay.
+	const n = 128
+	for round := range 50 {
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		for i := range n {
+			wg.Go(func() {
+				<-start
+				a.Set(round*n+i, struct{}{})
+			})
+		}
+		close(start)
+		wg.Wait()
+
+		var missing []int
+		for i := range n {
+			if _, ok := a.Peek(round*n + i); !ok {
+				missing = append(missing, i)
+			}
+		}
+		if len(missing) > 0 {
+			t.Fatal("round", round, "missing", len(missing), missing)
+		}
+	}
+
+	if d := a.Stats()["setImmediateEvicts"]; d != int64(0) {
+		t.Fatal(d)
+	}
+}
+
+func TestCache_evictSkip_setImmediateEvicts(t *testing.T) {
+	t.Parallel()
+
+	for _, selfEvict := range []bool{false, true} {
+		t.Run(fmt.Sprintf("selfEvict=%v", selfEvict), func(t *testing.T) {
+			t.Parallel()
+
+			always := func(int, struct{}) bool { return true }
+			a := cache.NewCache(cache.CacheOptions[int, struct{}]{Capacity: 1, EvictSkip: always, EvictSkipSelfEvict: selfEvict})
+
+			a.Set(1, struct{}{})
+			a.Set(2, struct{}{}) // 1 can't be evicted, so 2 is evicted immediately.
+
+			if _, ok := a.Peek(2); ok {
+				t.Fatal("2 should be evicted")
+			}
+			if d := a.Stats()["setImmediateEvicts"]; d != int64(1) {
+				t.Fatal(d)
+			}
+		})
+	}
+}
+
 func TestCache_SetCapacity_nonPositive(t *testing.T) {
 	t.Parallel()
 
@@ -573,6 +635,8 @@ func TestCache_Stats(t *testing.T) {
 			"t1TargetFraction": float64(0),
 			"t2Len":            int(1),
 		},
+		"setImmediateEvicts": int64(0),
+		"setSelfEvicts":      int64(0),
 	}
 	diffFatal(t, want, got)
 }

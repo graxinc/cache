@@ -111,6 +111,8 @@ type CacheOptions[K any, V Releaser] struct {
 	PolicyCreator func() policy.Policy[K]                         // defaults to policy.NewARC
 	Evict         func(_ K, _ V, Release func())                  // Caller must Release, not V.Release.
 	EvictSkip     bool
+	// With EvictSkip, a SetS during another evict frees its own size rather than immediately evicting its item.
+	EvictSkipSelfEvict bool
 }
 
 func NewCache[K comparable, V Releaser](o CacheOptions[K, V]) Cache[K, V] {
@@ -131,12 +133,13 @@ func NewCache[K comparable, V Releaser](o CacheOptions[K, V]) Cache[K, V] {
 	}
 
 	c := cache.NewCache(cache.CacheOptions[K, *Node[V]]{
-		Expiration:    o.Expiration,
-		Evict:         evict,
-		Capacity:      o.Capacity,
-		MapCreator:    o.MapCreator,
-		PolicyCreator: o.PolicyCreator,
-		EvictSkip:     evictSkip,
+		Expiration:         o.Expiration,
+		Evict:              evict,
+		Capacity:           o.Capacity,
+		MapCreator:         o.MapCreator,
+		PolicyCreator:      o.PolicyCreator,
+		EvictSkip:          evictSkip,
+		EvictSkipSelfEvict: o.EvictSkipSelfEvict,
 	})
 	return Cache[K, V]{c}
 }
